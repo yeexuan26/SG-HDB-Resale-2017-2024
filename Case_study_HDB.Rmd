@@ -1,0 +1,197 @@
+---
+title: "HDB resale Price"
+author: "Yee Xuan"
+date: "2024-01-26"
+output: html_document
+---
+# Case Study: Singapore HDB Resale Price (2017 - 2024)
+## Setting Up 
+### Import Libraries
+```{r load-packages, message= FALSE}
+library(tidyr)
+library(dplyr)
+library(readr)
+library(tidygeocoder)
+library(janitor)
+library(leaflet)
+library(lubridate)
+library(knitr)
+library (ggplot2)
+knitr::opts_chunk$set(echo = TRUE)
+```
+### Import data
+Data extracted from [Resale flat prices based on registration date from Jan-2017 onwards](https://beta.data.gov.sg/collections/189/datasets/d_8b84c4ee58e3cfc0ece0d773c8ca6abc/view)
+```{r import data}
+hdb_resale_df <- read.csv("C:/Users/yeexu/Desktop/adulting/Data_science/Google Data Analytics/capstone/SG_housing_transaction/dataset2/ResaleflatpricesbasedonregistrationdatefromJan2017onwards.csv")
+```
+
+```{r cleaning data}
+## cleaning the data, separate year and month, rename 'month' column to 'date'
+hdb_resale_df$date <- hdb_resale_df$month
+hdb_resale_df<- hdb_resale_df %>% 
+  separate(month,into=c('year', 'month'),sep = '-')
+
+head(hdb_resale_df)
+```
+
+
+## Macro Overview
+
+### Average Reslae Price of HDB across towns on map
+
+
+#### creating pivot table, to find average resale price
+```{r generate p_df pivot table, message= FALSE}
+p_df <- hdb_resale_df %>% 
+  group_by(year,town,flat_type) %>% 
+  summarize(average_resale_price= round(mean(resale_price),0), no_of_resale = n())
+```
+#### Finding coordinates for each town to plot onto leaflet 
+Use tidygeocoder package to determine lat and long values, which will be required when plotting the points using on map using leaflet package later on.\ 
+Note that, a new [country] column is added here so as to set boundary to Singapore only
+```{r geocoder, message= FALSE}
+geo_p_df <- p_df%>% 
+  mutate(country = 'Singapore') %>% 
+  tidygeocoder:: geocode(
+    street  = 'town',
+    country=  'country',
+    method = 'osm'
+  )
+```
+
+#### Manually adding missing lat and long values
+There are some town names that could not be found within geocoder package, hence manually inputting the lat and long vales after a quick search on google map. 
+```{r geo manual}
+geo_p_df$lat[geo_p_df$town== 'CENTRAL AREA'] <- 1.290439
+geo_p_df$long[geo_p_df$town== 'CENTRAL AREA'] <- 103.848571
+geo_p_df$lat[geo_p_df$town== 'KALLANG/WHAMPOA'] <- 1.3100
+geo_p_df$long[geo_p_df$town== 'KALLANG/WHAMPOA'] <- 103.8651
+```
+
+#### Plotting with Leaflet
+Using the leaflet library to determine plot the points. However, currently only plotting for **4-ROOM** flats and year **2023** as only a single (top most) type will appear in label.\
+To change the flat type and year, edit the code in `subset()`function.\
+
+* Further improvement:\
+  - Make plot more interactive and user-friendly with the availability of filter to apply filters on plots.\ 
+  - See [R_shiny_HDB_v2.R](https://github.com/yeexuan26/SG-HDB-Resale-207-2024-/blob/main/R_shiny_HDB_v2.R) in repository\
+  - click [here](https://rmarkdown.rstudio.com/lesson-14.html) for interactive documentations.\
+  
+* Use the plot to make comparison\
+  - Overlay pie chart on plot, to show percentage of flat type and flat model\
+  - Overlay scatter points to show varying resale price base on size of dot\ 
+```{r leaflet}
+leaflet(data = subset(geo_p_df, flat_type=='4 ROOM' & year==2023)) %>% 
+  addTiles() %>% 
+  addMarkers(lng = ~long, 
+             lat = ~lat,
+             label = ~town,
+             popup = ~paste(town, "<br>Year:",year,
+                            "<br>Flat Type:", flat_type,
+                            "<br>No of Resale:", no_of_resale,
+                            "<br>Average Resale Price:$", average_resale_price)
+)
+```
+### Average Resale Prices of HDB on Plot
+Comprehensive view of all the flat resale prices across towns over the years
+```{r facet_grid, fig.height = 10 ,fig.width=20, message= FALSE }
+#how does a room sell in a particular town
+ggplot(data = p_df, mapping = aes(x=year, y=average_resale_price, color=flat_type))+
+  geom_line()+
+  geom_point()+
+  facet_grid(flat_type~town, scales = "free_y")+
+  labs(title = 'HDB Resale Prices acorss Towns for Various Flat Type')+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,size = 5))+
+  theme(strip.text.x= element_text(size = 5))+
+  theme(strip.text.y= element_text(size = 5))+
+  scale_y_continuous(labels = scales::comma)
+```
+If this is too messy, filter can be applied by replacing `data = p_df` in `ggplot()` with
+`data = subset ()`, to show individual year or flat_type.\
+For instance, I want to compare prices of 4/5 ROOM flats across town, I will take the latest year data 2023 and add the respective filter accordingly. 
+```{r facet_grid_filt, fig.width=15, message= FALSE, include = FALSE }
+I <- ggplot(data = subset (p_df, year == 2023 & (flat_type =="4 ROOM" |flat_type =="5 ROOM") ), mapping = aes(x=year, y=average_resale_price, color=flat_type))+
+  geom_line()+
+  geom_point()+
+  facet_grid(flat_type~town, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "HDB Resale Prices acorss Towns for Various Flat Type")
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,size = 5))+
+  theme(strip.text.x= element_text(size = 5))+
+  theme(strip.text.y= element_text(size = 5))
+  
+
+
+# adding an avg horizontal line 
+avg_price_per_flat_type <- hdb_resale_df %>% 
+  group_by(year,flat_type) %>%
+  summarise(avg_price=round(mean(resale_price),2))
+I + 
+geom_hline(data = subset(avg_price_per_flat_type, year == 2023 & (flat_type =="4 ROOM" |flat_type =="5 ROOM")), 
+           aes(yintercept= avg_price,  colour= 'average_line'))
+  #scale_linetype_manual(values = c(1, 1), 
+                      #guide = guide_legend(override.aes = list(color = "red")))
+  
+```
+
+### No. of resales over the years
+```{r resale_count, fig.width=10, echo = FALSE}
+ggplot(data = hdb_resale_df)+
+  geom_bar(data=subset(hdb_resale_df),mapping = aes(x=year, fill = flat_type))+
+  geom_text(aes(x=year, label = after_stat(count)), stat = "count", vjust = -1, size = 2)+
+  #geom_text(aes(label= sprintf("%1.1f", count)))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+
+  scale_y_continuous(
+    labels = scales::comma)+
+  labs(title = 'Resale Count over the years', 
+       Caption = "Resale Price of HDB from 2017 to 2024")
+``` 
+2021 saw a peak in resale flats at 29,087 sold in that year.\
+Only January data avialable for 2024, hence the disparity in volumn
+
+## Million Dollar Towns
+In recent years, there is an increasing trend with HDB being sold at record prices, let's find out where these HDBs are located and their features.
+
+### Most expensive flat sold per town (table)
+Creating a dataframe with the most expensive flats in each town. 
+Additional Feature (to be added in the future):\
+
+* To make scrollable table with column sorting enabled 
+```{r max_resale_price}
+#Most expensive flat per town
+max_resale_df <-hdb_resale_df[,c("town","resale_price","date",
+                                 "flat_type","flat_model",
+                                 "floor_area_sqm","remaining_lease",
+                                 "street_name","block","storey_range")] %>% 
+  group_by(town) %>% 
+  filter(resale_price == max(resale_price)) %>% 
+  mutate(price_per_sqm = round(resale_price/floor_area_sqm),0) %>% 
+  relocate(price_per_sqm , .after="floor_area_sqm") %>% 
+  arrange(desc(resale_price))
+
+head (max_resale_df)
+``` 
+To take a closer look, let's plot this information on a graph.\
+First, we need to create the pivot table, filter to resale price more than $1 million.
+```{r million_df}
+million_df<- hdb_resale_df %>% 
+  filter(resale_price >1000000) %>% 
+  group_by(town) %>% 
+  summarize (Count =  n())
+```
+Then, plot on the number of resale flats that were priced above $1Mil, grouped by town and placed in descending order.\ 
+The line plot shows the number of resale flats, while the bar plot breaks down the flat type of million dollar HDB. 
+```{r million plot, fig.width=10, echo=FALSE}
+ggplot(data = subset(hdb_resale_df, resale_price >1000000 ))+
+  geom_bar(mapping = aes(x=town, fill=flat_type), position =position_dodge2(preserve = "single"))+
+  #facet_wrap(~year)+
+  geom_text(aes(x=town, label = after_stat(count)), stat = "count", vjust = -1, size = 2)+
+  geom_line(data =million_df, mapping = aes(x=reorder(town, -Count), y=Count, group =1, color = "red"))+
+  geom_point(data =million_df, mapping = aes(x=reorder(town, -Count), y=Count, color = "red"))+
+  labs(title = 'Million Dollar HDBs', 
+       Caption = "Resale Price of HDB from 2017 to 2024")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+
+
